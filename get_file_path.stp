@@ -1,0 +1,38 @@
+#! /usr/bin/env stap
+
+global tag
+global gooduri
+
+@define GET %( 0x0002 %)
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("http_request_user_check") {
+
+        str = $r->uri->data
+        len = $r->uri->len
+
+        gooduri = user_string_n_warn(str, len)
+
+        if (@1 == gooduri) {
+            if ($r->method == @GET) {
+                tag = $r
+            }
+        }
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("acfs_get_path") {
+    path = user_string_n_warn($conf->path->data, $conf->path->len)
+    l1 = $conf->baseconfig->l1
+    l2 = $conf->baseconfig->l2
+    printf("%s/%02X/%02X/%08X\n", path, (($filn / l2) / l2) % l1 + 1, ($filn / l2) % l2 + 1, $filn)
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("__http_request_close") {
+    if (tag == $r && $r->method == @GET) {
+        exit()
+    }
+} 
+
+probe end {
+    delete tag
+    delete gooduri
+}

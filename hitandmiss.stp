@@ -1,0 +1,45 @@
+#! /usr/bin/env stap
+
+global tag
+global gooduri
+
+@define GET %( 0x0002 %)
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("http_request_user_check") {
+
+        str = $r->uri->data
+        len = $r->uri->len
+
+        gooduri = user_string_n_warn(str, len)
+
+        if (@1 == gooduri) {
+            if ($r->method == @GET) {
+                tag = $r
+            }
+        }
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("store_object_get").return {
+    if (tag  == $data && @cast($data, "http_request_t")->method == @GET) {
+        if ($return != 0) {
+            if ($return->status == 0) {
+                printf("uri: %s, status: %d, HIT\n", gooduri, $return->status)
+            } else {
+                printf("uri: %s, status: %d, pending MISS\n", gooduri, $return->status)
+            }
+        } else {
+            printf("uri: %s, status: %d, first MISS\n", gooduri, $return)
+        }
+    }
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("__http_request_close") {
+    if (tag == $r && $r->method == @GET) {
+        exit()
+    }
+} 
+
+probe end {
+    delete tag
+    delete gooduri
+}

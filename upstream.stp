@@ -1,0 +1,61 @@
+#! /usr/bin/env stap
+# ./upstream.stp -x fcd_pid "uri" such as: ./upstream.stp -x 23409 "/test/index.html"
+#
+
+global process_start = 0
+global resolver_start = 0
+global resolver_end = 0
+global tag = 0 
+global request_close = 0
+global i = 0
+global ips
+
+@define GET %( 0x0002 %)
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("http_request_user_check") {
+
+        str = $r->uri->data
+        len = $r->uri->len
+
+        gooduri = user_string_n_warn(str, len)
+
+        if (@1 == gooduri) {
+            if ($r->method == @GET) {
+                tag = $r
+		process_start = gettimeofday_ms()
+            }
+        }
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("conn_connect_peer").return {
+     if (tag == $r && $r->method == @GET) {
+        ips[i] = user_string_n_warn(@cast($r->uip, "string_t")[i]->data, @cast($r->uip, "string_t")[i]->len) 
+        printf("request \"%s\" go to upstream %d: %s\n", user_string_n_warn($r->uri->data, $r->uri->len), i, ips[i])
+        i++;
+        exit()
+     }
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("__http_request_close") {
+    if (tag == $r && $r->method == @GET) {
+        request_close = gettimeofday_ms()
+        tag = 0
+	exit()
+    }
+}
+
+probe end {
+    delete process_start
+    delete resolver_start
+    delete resolver_end
+    delete request_close
+    delete i
+    delete tag
+}
+
+
+
+
+
+
+
