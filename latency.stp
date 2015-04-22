@@ -1,0 +1,83 @@
+#! /usr/bin/env stap
+
+global tag
+global gooduri
+global checkuser_time
+global store_get_time
+global send_body_time
+global request_close
+global aio_read_done
+global aio_read_start
+
+@define GET %( 0x0002 %)
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("http_request_user_check") {
+
+        str = $r->uri->data
+        len = $r->uri->len
+
+        gooduri = user_string_n_warn(str, len)
+
+        if (@1 == gooduri) {
+            if ($r->method == @GET) {
+                tag = $r
+		checkuser_time = gettimeofday_ms()
+            }
+        }
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("store_object_get").return {
+    if (tag  == $data && @cast($data, "http_request_t")->method == @GET) {
+        if ($return != 0) {
+            if ($return->status == 0) {
+                store_get_time = gettimeofday_ms()
+            } 
+        }
+    }
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("http_upstream_read_header_from_disk_complete") {
+     if (tag == $data && @cast($data, "http_request_t")->method == @GET) {
+         aio_read_done = gettimeofday_ms() 
+     }
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("http_upstream_read_header_from_store") {
+     if (tag == $r && $r->method == @GET) {
+        aio_read_start = gettimeofday_ms()
+     } 
+}
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("__http_request_close") {
+    if (tag == $r && $r->method == @GET) {
+        
+	request_close = gettimeofday_ms()
+
+        #printf("checkuser - store_get: %dms, store_get - send_body: %dms, send_body - request_close: %dms\n", 
+        #    store_get_time - checkuser_time, send_body_time - store_get_time, request_close - send_body_time)
+
+        printf("aio read header: %dms, send header and body: %dms\n", aio_read_done - aio_read_start, request_close - aio_read_done) 
+
+        exit()
+    }
+} 
+
+probe process("/usr/local/fastcache/sbin/fastcache").function("http_upstream_pack_response_body") {
+        if (tag == $r && $r->method == @GET) {
+
+             send_body_time = gettimeofday_ms()
+
+	}
+}
+
+
+probe end {
+    delete tag
+    delete gooduri
+    delete checkuser_time
+    delete store_get_time
+    delete send_body_time
+    delete request_close
+    delete aio_read_start
+    delete aio_read_done
+}
